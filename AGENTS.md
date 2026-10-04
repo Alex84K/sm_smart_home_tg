@@ -1,7 +1,7 @@
 # tg_gateway_go — инструкции для агентов
 
-Go-код Telegram-шлюза Simple Smart Home: прием команд пользователя и отправка уведомлений через Telegram Bot API (ADR-0017).
-Шлюз подключается к ядру по сети через Go-модуль контракта `github.com/Alex84K/core_syst_go/contract`.
+Go-код Telegram-шлюза Simple Smart Home: прием команд пользователя и отправка уведомлений через Telegram Bot API (ADR-0017, ADR-0018).
+Шлюз подключается к ядру по сети через Go-модуль контракта `github.com/Alex84K/sm_smart_home_core_go/contract`.
 
 ## Источник правды — общий OpenSpec store
 
@@ -21,6 +21,22 @@ Go-код Telegram-шлюза Simple Smart Home: прием команд пол�
 2. На десктопе: подними локальный шлюз через `make up-dev` (или `make run`)
 3. После завершения работы на десктопе: `make down` на десктопе, затем запусти бота на homelab (`docker compose start tg-gateway`)
 
+## Одновременная правка ядра и шлюза (ADR-0018, design D4)
+
+Для локальной разработки без публикации промежуточных версий контракта:
+1. В шлюзе: `make work CORE=../core_syst_go` (создаёт локальный `go.work`, связывающий шлюз с `$(CORE)/contract`).
+2. Внеси правки в ядро и шлюз.
+3. В ядре: выпусти релиз контракта `make contract-release VERSION=vX.Y.Z`.
+4. В шлюзе: `make unwork` и обнови зависимость `make contract-update VERSION=vX.Y.Z`.
+5. Закоммить изменения.
+
+## Требования к сборке и ~/.netrc (ADR-0018, design D5)
+
+Репозиторий ядра `sm_smart_home_core_go` — приватный.
+- Для Docker-сборки образа шлюза на машине сборки (десктоп, homelab) требуется файл `~/.netrc` с правами `600` (`chmod 600 ~/.netrc`).
+- Содержимое: запись `machine github.com login <github-user> password <token>` с fine-grained токеном GitHub (права `Contents: Read-only` на репозиторий `sm_smart_home_core_go`).
+- Токен передаётся через BuildKit secret и никогда не попадает в образ или в `.env`.
+
 ## Проверка
 
 - Перед коммитом: `make check` (линтер + тесты с флагом `-race`, включая архитектурный тест). Коммить только при зелёном `make check`.
@@ -28,7 +44,7 @@ Go-код Telegram-шлюза Simple Smart Home: прием команд пол�
 
 ## Деплой на homelab
 
-Вручную по SSH, автоматики нет (`../agentic_docs/brainstorm/open-questions.md`, раздел GitOps). Клон — `~/homelab/simple_smart_home/sm_smart_home_tg` рядом с клоном ядра `sm_smart_home_core_go` (нужен для сборки, пока контракт берётся из соседней папки); `.env` лежит только в клоне.
+Вручную по SSH, автоматики нет (`../agentic_docs/brainstorm/open-questions.md`, раздел GitOps). Клон — `~/homelab/simple_smart_home/sm_smart_home_tg`; `.env` лежит только в клоне.
 1. Ядро уже запущено (`smarthome_backend` создаёт его compose).
 2. `git pull`
 3. `make up` (`docker compose up -d --build`: образ пересобирается из свежего кода)

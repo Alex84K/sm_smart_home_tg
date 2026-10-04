@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Alex84K/tg_gateway_go/internal/platform/log"
+	"github.com/Alex84K/sm_smart_home_tg/internal/platform/log"
 )
 
 func TestMaskSecrets(t *testing.T) {

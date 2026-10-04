@@ -7,7 +7,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/Alex84K/core_syst_go/contract"
+	"github.com/Alex84K/sm_smart_home_core_go/contract"
 )
 
 // Sentinel errors returned by the core client.

@@ -1,11 +1,11 @@
-module github.com/Alex84K/tg_gateway_go
+module github.com/Alex84K/sm_smart_home_tg
 
 go 1.26.4
 
 tool github.com/golangci/golangci-lint/cmd/golangci-lint
 
 require (
-	github.com/Alex84K/core_syst_go/contract v0.1.0
+	github.com/Alex84K/sm_smart_home_core_go/contract v0.2.0
 	github.com/go-telegram/bot v1.27.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/sync v0.12.0
@@ -197,5 +197,3 @@ require (
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
 )
-
-replace github.com/Alex84K/core_syst_go/contract => ../core_syst_go/contract

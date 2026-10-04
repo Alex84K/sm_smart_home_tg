@@ -14,8 +14,8 @@ type PackageInfo struct {
 	Deps       []string `json:"Deps"`
 }
 
-const modulePrefix = "github.com/Alex84K/tg_gateway_go/"
-const contractModulePrefix = "github.com/Alex84K/core_syst_go/contract"
+const modulePrefix = "github.com/Alex84K/sm_smart_home_tg/"
+const contractModulePrefix = "github.com/Alex84K/sm_smart_home_core_go/contract"
 
 func TestArchitectureImports(t *testing.T) {
 	cmd := exec.Command("go", "list", "-json", "./...")

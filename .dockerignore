@@ -3,3 +3,5 @@ bin/
 .git
 .claude
 .DS_Store
+go.work
+go.work.sum

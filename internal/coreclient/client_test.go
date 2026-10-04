@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/Alex84K/core_syst_go/contract"
-	"github.com/Alex84K/tg_gateway_go/internal/coreclient"
+	"github.com/Alex84K/sm_smart_home_core_go/contract"
+	"github.com/Alex84K/sm_smart_home_tg/internal/coreclient"
 )
 
 func TestCoreClient(t *testing.T) {

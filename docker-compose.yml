@@ -5,8 +5,8 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      additional_contexts:
-        contract: ${CONTRACT_PATH:-../sm_smart_home_core_go/contract}
+      secrets:
+        - netrc
     restart: unless-stopped
     networks:
       - smarthome_backend
@@ -24,3 +24,7 @@ networks:
     external: true
   egress:
     driver: bridge
+
+secrets:
+  netrc:
+    file: ${NETRC_FILE:-${HOME}/.netrc}

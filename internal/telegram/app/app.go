@@ -12,9 +12,9 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 
-	"github.com/Alex84K/core_syst_go/contract"
-	"github.com/Alex84K/tg_gateway_go/internal/coreclient"
-	"github.com/Alex84K/tg_gateway_go/internal/platform/config"
+	"github.com/Alex84K/sm_smart_home_core_go/contract"
+	"github.com/Alex84K/sm_smart_home_tg/internal/coreclient"
+	"github.com/Alex84K/sm_smart_home_tg/internal/platform/config"
 )
 
 // Clock provides current time, abstracted for deterministic testing (CONVENTIONS.md).

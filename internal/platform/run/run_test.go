@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Alex84K/tg_gateway_go/internal/platform/run"
+	"github.com/Alex84K/sm_smart_home_tg/internal/platform/run"
 )
 
 func TestGroupRunCancellation(t *testing.T) {

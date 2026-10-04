@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/Alex84K/tg_gateway_go/internal/platform/config"
+	"github.com/Alex84K/sm_smart_home_tg/internal/platform/config"
 )
 
 func TestLoadTGConfigValidation(t *testing.T) {

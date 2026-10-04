@@ -1,6 +1,8 @@
-.PHONY: help lint test check build docker run up up-dev down logs contract-update
+.PHONY: help lint test check build docker run up up-dev down logs work unwork contract-update
 
-CONTRACT_PATH ?= ../sm_smart_home_core_go/contract
+export GOPRIVATE ?= github.com/Alex84K/*
+NETRC_FILE ?= $(HOME)/.netrc
+CORE ?= ../sm_smart_home_core_go
 
 help:
 	@echo "Available targets:"
@@ -15,6 +17,8 @@ help:
 	@echo "  up-dev          - Build and start tg-gateway via docker-compose.dev.yml (desktop dev mode)"
 	@echo "  down            - Stop services via docker-compose"
 	@echo "  logs            - Tail service logs via docker-compose"
+	@echo "  work            - Init go.work for local development with core contract (usage: make work CORE=...)"
+	@echo "  unwork          - Remove go.work and go.work.sum"
 	@echo "  contract-update - Update contract module (usage: make contract-update VERSION=vX.Y.Z)"
 
 lint:
@@ -30,7 +34,7 @@ build:
 	go build -o bin/tg-gateway ./cmd/tg-gateway
 
 docker:
-	docker build --build-context contract=$(CONTRACT_PATH) -t simple-smart-home-tg-gateway:latest .
+	docker build --secret id=netrc,src=$(NETRC_FILE) -t simple-smart-home-tg-gateway:latest .
 
 run: build
 	./bin/tg-gateway
@@ -47,10 +51,16 @@ down:
 logs:
 	docker compose logs -f
 
+work:
+	go work init . $(CORE)/contract
+
+unwork:
+	rm -f go.work go.work.sum
+
 contract-update:
 	@if [ -z "$(VERSION)" ]; then \
 		echo "Error: VERSION is required (e.g. make contract-update VERSION=v0.1.0)"; \
 		exit 1; \
 	fi
-	go get github.com/Alex84K/core_syst_go/contract@$(VERSION)
+	go get github.com/Alex84K/sm_smart_home_core_go/contract@$(VERSION)
 	go mod tidy
