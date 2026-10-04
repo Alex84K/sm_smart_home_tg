@@ -94,11 +94,24 @@ func New(cfg *config.TGConfig, logger *slog.Logger) (*App, error) {
 
 	app.bot = b
 
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, app.HandleMenu)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, app.HandleStart)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/menu", bot.MatchTypeExact, app.HandleMenu)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "🏠 Меню", bot.MatchTypeExact, app.HandleMenu)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "меню", bot.MatchTypeExact, app.HandleMenu)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Меню", bot.MatchTypeExact, app.HandleMenu)
+
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/status", bot.MatchTypeExact, app.HandleStatus)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "📊 Статус", bot.MatchTypeExact, app.HandleStatus)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "статус", bot.MatchTypeExact, app.HandleStatus)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Статус", bot.MatchTypeExact, app.HandleStatus)
+
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/photo", bot.MatchTypeExact, app.HandlePhoto)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "📷 Фото", bot.MatchTypeExact, app.HandlePhoto)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "фото", bot.MatchTypeExact, app.HandlePhoto)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Фото", bot.MatchTypeExact, app.HandlePhoto)
+
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "photo", bot.MatchTypeExact, app.HandleCallbackPhoto)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "status", bot.MatchTypeExact, app.HandleCallbackStatus)
 
 	return app, nil
 }
@@ -127,12 +140,55 @@ func (a *App) Bot() *bot.Bot {
 // Run starts the long-polling Telegram bot (run.Runner).
 func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("starting telegram gateway bot")
+
+	if _, err := a.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{
+		Commands: []models.BotCommand{
+			{Command: "photo", Description: "Сделать снимок с камеры"},
+			{Command: "status", Description: "Статус системы (камера, диск)"},
+			{Command: "menu", Description: "Главное меню"},
+		},
+	}); err != nil {
+		a.logger.Warn("failed to set telegram bot commands", slog.Any("err", err))
+	}
+
 	a.bot.Start(ctx)
 	a.logger.Info("telegram gateway bot stopped")
 	return nil
 }
 
-// HandleMenu handles /start and /menu commands.
+func defaultReplyKeyboard() *models.ReplyKeyboardMarkup {
+	return &models.ReplyKeyboardMarkup{
+		Keyboard: [][]models.KeyboardButton{
+			{
+				{Text: "📷 Фото"},
+				{Text: "📊 Статус"},
+			},
+		},
+		ResizeKeyboard:        true,
+		IsPersistent:          true,
+		InputFieldPlaceholder: "Выберите действие...",
+	}
+}
+
+// HandleStart handles /start command, setting up reply keyboard and showing menu.
+func (a *App) HandleStart(ctx context.Context, b *bot.Bot, update *models.Update) {
+	chatID := getChatID(update)
+	if chatID == 0 {
+		return
+	}
+
+	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        "🏡 Добро пожаловать в Simple Smart Home!\n\nКнопки быстрого доступа закреплены внизу экрана.",
+		ReplyMarkup: defaultReplyKeyboard(),
+	}); err != nil {
+		a.logger.Error("failed to send telegram start message", slog.Any("err", err), slog.Int64("chat_id", chatID))
+	}
+
+	a.HandleMenu(ctx, b, update)
+}
+
+// HandleMenu handles /menu command.
 func (a *App) HandleMenu(ctx context.Context, b *bot.Bot, update *models.Update) {
 	chatID := getChatID(update)
 	if chatID == 0 {
@@ -143,6 +199,7 @@ func (a *App) HandleMenu(ctx context.Context, b *bot.Bot, update *models.Update)
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
 				{Text: "📷 Фото", CallbackData: "photo"},
+				{Text: "📊 Статус", CallbackData: "status"},
 			},
 		},
 	}
@@ -163,6 +220,29 @@ func (a *App) HandleStatus(ctx context.Context, b *bot.Bot, update *models.Updat
 		return
 	}
 
+	a.sendStatusAction(ctx, b, chatID)
+}
+
+// HandleCallbackStatus handles status inline button click.
+func (a *App) HandleCallbackStatus(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.CallbackQuery == nil {
+		return
+	}
+	chatID := getChatID(update)
+	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: update.CallbackQuery.ID,
+	}); err != nil {
+		a.logger.Error("failed to answer callback query", slog.Any("err", err), slog.Int64("chat_id", chatID))
+	}
+
+	if chatID == 0 {
+		return
+	}
+
+	a.sendStatusAction(ctx, b, chatID)
+}
+
+func (a *App) sendStatusAction(ctx context.Context, b *bot.Bot, chatID int64) {
 	st, err := a.coreClient.GetStatus(ctx)
 	if err != nil {
 		a.logger.Error("failed to get status from core", slog.Any("err", err))
@@ -176,9 +256,19 @@ func (a *App) HandleStatus(ctx context.Context, b *bot.Bot, update *models.Updat
 	}
 
 	msg := formatStatusMessage(st)
+	statusKeyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{
+				{Text: "🔄 Обновить", CallbackData: "status"},
+				{Text: "📷 Фото", CallbackData: "photo"},
+			},
+		},
+	}
+
 	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   msg,
+		ChatID:      chatID,
+		Text:        msg,
+		ReplyMarkup: statusKeyboard,
 	}); err != nil {
 		a.logger.Error("failed to send telegram status message", slog.Any("err", err), slog.Int64("chat_id", chatID))
 	}
@@ -242,12 +332,22 @@ func (a *App) sendPhotoAction(ctx context.Context, b *bot.Bot, chatID int64) {
 		return
 	}
 
+	photoKeyboard := &models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{
+				{Text: "🔄 Ещё фото", CallbackData: "photo"},
+				{Text: "📊 Статус", CallbackData: "status"},
+			},
+		},
+	}
+
 	if _, err := b.SendPhoto(ctx, &bot.SendPhotoParams{
 		ChatID: chatID,
 		Photo: &models.InputFileUpload{
 			Filename: "photo.jpg",
 			Data:     bytes.NewReader(photoBytes),
 		},
+		ReplyMarkup: photoKeyboard,
 	}); err != nil {
 		a.logger.Error("failed to send photo", slog.Any("err", err), slog.Int64("chat_id", chatID))
 	}
