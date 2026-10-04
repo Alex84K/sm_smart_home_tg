@@ -3,10 +3,10 @@ name: smarthome-tg-gateway
 services:
   tg-gateway:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
       additional_contexts:
-        contract: ../../core_syst_go/contract
+        contract: ../core_syst_go/contract
     restart: unless-stopped
     networks:
       - smarthome_backend

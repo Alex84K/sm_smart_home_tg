@@ -34,16 +34,16 @@ run: build
 	./bin/tg-gateway
 
 up:
-	docker compose --env-file .env -f deploy/docker-compose.yml up -d
+	docker compose up -d
 
 up-dev:
-	docker compose --env-file .env -f deploy/docker-compose.dev.yml up -d
+	docker compose -f docker-compose.dev.yml up -d
 
 down:
-	docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down
+	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
 
 logs:
-	docker compose -f deploy/docker-compose.yml logs -f
+	docker compose logs -f
 
 contract-update:
 	@if [ -z "$(VERSION)" ]; then \

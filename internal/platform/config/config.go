@@ -27,7 +27,7 @@ func LoadTGConfig(envPath string) (*TGConfig, error) {
 		LogLevel:         getEnv("LOG_LEVEL", "info"),
 		TelegramBotToken: os.Getenv("TELEGRAM_BOT_TOKEN"),
 		TelegramAPIURL:   getEnv("TELEGRAM_API_URL", "https://api.telegram.org"),
-		CoreAPIURL:       getEnv("CORE_API_URL", "http://core:8080"),
+		CoreAPIURL:       resolveCoreAPIURL(),
 		CoreAPIToken:     os.Getenv("CORE_API_TOKEN"),
 	}
 
@@ -68,6 +68,14 @@ func getEnv(key, defaultVal string) string {
 		return val
 	}
 	return defaultVal
+}
+
+func resolveCoreAPIURL() string {
+	if url := os.Getenv("CORE_API_URL"); url != "" {
+		return url
+	}
+	port := getEnv("CORE_PORT", getEnv("PORT", "8080"))
+	return "http://core:" + strings.TrimPrefix(port, ":")
 }
 
 func parseAllowedIDs(raw string) ([]int64, error) {

@@ -3,24 +3,21 @@ name: smarthome-tg-gateway
 services:
   tg-gateway:
     build:
-      context: ..
+      context: .
       dockerfile: Dockerfile
       additional_contexts:
-        contract: ../../core_syst_go/contract
+        contract: ../core_syst_go/contract
     restart: unless-stopped
     networks:
-      - smarthome_backend
       - egress
     environment:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
       - TELEGRAM_API_URL=${TELEGRAM_API_URL:-https://api.telegram.org}
       - TELEGRAM_ALLOWED_IDS=${TELEGRAM_ALLOWED_IDS}
-      - CORE_API_URL=${CORE_API_URL:-http://core:${CORE_PORT:-${PORT:-8080}}}
+      - CORE_API_URL=${CORE_API_URL}
       - CORE_API_TOKEN=${CORE_API_TOKEN}
 
 networks:
-  smarthome_backend:
-    external: true
   egress:
     driver: bridge
