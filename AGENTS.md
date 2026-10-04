@@ -31,7 +31,7 @@ Go-код Telegram-шлюза Simple Smart Home: прием команд пол�
 Вручную по SSH, автоматики нет (`../agentic_docs/brainstorm/open-questions.md`, раздел GitOps). Клон — `~/homelab/simple_smart_home/sm_smart_home_tg` рядом с клоном ядра `sm_smart_home_core_go` (нужен для сборки, пока контракт берётся из соседней папки); `.env` лежит только в клоне.
 1. Ядро уже запущено (`smarthome_backend` создаёт его compose).
 2. `git pull`
-3. `docker compose up -d --build` (без `--build` контейнер поднимется из старого образа)
+3. `make up` (`docker compose up -d --build`: образ пересобирается из свежего кода)
 
 ## Жёсткие границы
 

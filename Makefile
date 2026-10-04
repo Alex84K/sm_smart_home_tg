@@ -11,8 +11,8 @@ help:
 	@echo "  build           - Compile tg-gateway binary into bin/"
 	@echo "  docker          - Build Docker image for tg-gateway"
 	@echo "  run             - Run tg-gateway locally with .env"
-	@echo "  up              - Start tg-gateway via docker-compose (homelab mode)"
-	@echo "  up-dev          - Start tg-gateway via docker-compose.dev.yml (desktop dev mode)"
+	@echo "  up              - Build and start tg-gateway via docker-compose (homelab mode)"
+	@echo "  up-dev          - Build and start tg-gateway via docker-compose.dev.yml (desktop dev mode)"
 	@echo "  down            - Stop services via docker-compose"
 	@echo "  logs            - Tail service logs via docker-compose"
 	@echo "  contract-update - Update contract module (usage: make contract-update VERSION=vX.Y.Z)"
@@ -36,10 +36,10 @@ run: build
 	./bin/tg-gateway
 
 up:
-	docker compose up -d
+	docker compose up -d --build
 
 up-dev:
-	docker compose -f docker-compose.dev.yml up -d
+	docker compose -f docker-compose.dev.yml up -d --build
 
 down:
 	docker compose -f docker-compose.yml -f docker-compose.dev.yml down
