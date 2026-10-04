@@ -5,7 +5,7 @@ go 1.26.4
 tool github.com/golangci/golangci-lint/cmd/golangci-lint
 
 require (
-	github.com/Alex84K/sm_smart_home_core_go/contract v0.4.0
+	github.com/Alex84K/sm_smart_home_core_go/contract v0.5.0
 	github.com/go-telegram/bot v1.27.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/sync v0.19.0

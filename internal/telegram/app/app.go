@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -65,7 +64,23 @@ type App struct {
 	bot        *bot.Bot
 	coreClient *coreclient.Client
 	logger     *slog.Logger
+
+	// afterFunc schedules the auto-stop of a clip; replaced in tests.
+	afterFunc func(d time.Duration, f func()) *time.Timer
+
+	clipMu sync.Mutex
+	clips  map[string]*pendingClip
 }
+
+// pendingClip is a clip recording started from this gateway, waiting for «Стоп» or the max duration.
+type pendingClip struct {
+	chatID    int64
+	messageID int
+	timer     *time.Timer
+	stopping  bool
+}
+
+const clipStopPrefix = "clip_stop:"
 
 // New creates and initializes the Telegram gateway bot application.
 func New(cfg *config.TGConfig, logger *slog.Logger) (*App, error) {
@@ -81,6 +96,8 @@ func New(cfg *config.TGConfig, logger *slog.Logger) (*App, error) {
 	app := &App{
 		coreClient: client,
 		logger:     logger,
+		afterFunc:  time.AfterFunc,
+		clips:      make(map[string]*pendingClip),
 	}
 
 	opts := []bot.Option{
@@ -112,20 +129,15 @@ func New(cfg *config.TGConfig, logger *slog.Logger) (*App, error) {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "фото", bot.MatchTypeExact, app.HandlePhoto)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "Фото", bot.MatchTypeExact, app.HandlePhoto)
 
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/clip", bot.MatchTypePrefix, app.HandleClip)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "🎬 Клип 30с", bot.MatchTypeExact, app.HandleClipDefault)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "клип", bot.MatchTypeExact, app.HandleClipDefault)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "Клип", bot.MatchTypeExact, app.HandleClipDefault)
-
-	b.RegisterHandler(bot.HandlerTypeMessageText, "/rec", bot.MatchTypePrefix, app.HandleRec)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "⏺ Запись", bot.MatchTypeExact, app.HandleRecToggle)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "запись", bot.MatchTypeExact, app.HandleRecToggle)
-	b.RegisterHandler(bot.HandlerTypeMessageText, "Запись", bot.MatchTypeExact, app.HandleRecToggle)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/clip", bot.MatchTypeExact, app.HandleClip)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "🎬 Клип", bot.MatchTypeExact, app.HandleClip)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "клип", bot.MatchTypeExact, app.HandleClip)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Клип", bot.MatchTypeExact, app.HandleClip)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "photo", bot.MatchTypeExact, app.HandleCallbackPhoto)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "clip", bot.MatchTypeExact, app.HandleCallbackClip)
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, clipStopPrefix, bot.MatchTypePrefix, app.HandleCallbackClipStop)
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "status", bot.MatchTypeExact, app.HandleCallbackStatus)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "clip_30", bot.MatchTypeExact, app.HandleCallbackClip30)
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "rec_toggle", bot.MatchTypeExact, app.HandleCallbackRecToggle)
 
 	return app, nil
 }
@@ -138,6 +150,8 @@ func NewWithDeps(coreClient *coreclient.Client, logger *slog.Logger) *App {
 	return &App{
 		coreClient: coreClient,
 		logger:     logger,
+		afterFunc:  time.AfterFunc,
+		clips:      make(map[string]*pendingClip),
 	}
 }
 
@@ -158,9 +172,8 @@ func (a *App) Run(ctx context.Context) error {
 	if _, err := a.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{
 		Commands: []models.BotCommand{
 			{Command: "photo", Description: "Сделать снимок с камеры"},
-			{Command: "clip", Description: "Записать клип (по умолчанию 30с)"},
-			{Command: "rec", Description: "Управление записью (on/off)"},
-			{Command: "status", Description: "Статус системы (камера, запись, архив, диск)"},
+			{Command: "clip", Description: "Записать клип (старт/стоп)"},
+			{Command: "status", Description: "Статус системы (камера, диск)"},
 			{Command: "menu", Description: "Главное меню"},
 		},
 	}); err != nil {
@@ -177,11 +190,8 @@ func defaultReplyKeyboard() *models.ReplyKeyboardMarkup {
 		Keyboard: [][]models.KeyboardButton{
 			{
 				{Text: "📷 Фото"},
-				{Text: "🎬 Клип 30с"},
-			},
-			{
+				{Text: "🎬 Клип"},
 				{Text: "📊 Статус"},
-				{Text: "⏺ Запись"},
 			},
 		},
 		ResizeKeyboard:        true,
@@ -219,11 +229,8 @@ func (a *App) HandleMenu(ctx context.Context, b *bot.Bot, update *models.Update)
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
 				{Text: "📷 Фото", CallbackData: "photo"},
-				{Text: "🎬 Клип 30с", CallbackData: "clip_30"},
-			},
-			{
+				{Text: "🎬 Клип", CallbackData: "clip"},
 				{Text: "📊 Статус", CallbackData: "status"},
-				{Text: "⏺ Запись", CallbackData: "rec_toggle"},
 			},
 		},
 	}
@@ -285,10 +292,7 @@ func (a *App) sendStatusAction(ctx context.Context, b *bot.Bot, chatID int64) {
 			{
 				{Text: "🔄 Обновить", CallbackData: "status"},
 				{Text: "📷 Фото", CallbackData: "photo"},
-			},
-			{
-				{Text: "🎬 Клип 30с", CallbackData: "clip_30"},
-				{Text: "⏺ Запись", CallbackData: "rec_toggle"},
+				{Text: "🎬 Клип", CallbackData: "clip"},
 			},
 		},
 	}
@@ -364,11 +368,8 @@ func (a *App) sendPhotoAction(ctx context.Context, b *bot.Bot, chatID int64) {
 		InlineKeyboard: [][]models.InlineKeyboardButton{
 			{
 				{Text: "🔄 Ещё фото", CallbackData: "photo"},
-				{Text: "🎬 Клип 30с", CallbackData: "clip_30"},
-			},
-			{
+				{Text: "🎬 Клип", CallbackData: "clip"},
 				{Text: "📊 Статус", CallbackData: "status"},
-				{Text: "⏺ Запись", CallbackData: "rec_toggle"},
 			},
 		},
 	}
@@ -385,244 +386,210 @@ func (a *App) sendPhotoAction(ctx context.Context, b *bot.Bot, chatID int64) {
 	}
 }
 
-// HandleClip handles /clip [sec] command.
+// HandleClip handles /clip and the «🎬 Клип» reply button: starts a clip recording.
 func (a *App) HandleClip(ctx context.Context, b *bot.Bot, update *models.Update) {
 	chatID := getChatID(update)
 	if chatID == 0 {
 		return
 	}
-
-	text := ""
-	if update.Message != nil {
-		text = update.Message.Text
-	}
-	arg := strings.TrimSpace(strings.TrimPrefix(text, "/clip"))
-
-	sec := 30
-	if arg != "" {
-		parsed, err := strconv.Atoi(arg)
-		if err != nil || parsed <= 0 {
-			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Длительность клипа должна быть положительным числом секунд (например, /clip 30).")
-			return
-		}
-		sec = parsed
-	}
-
-	a.sendClipAction(ctx, b, chatID, sec)
+	a.startClip(ctx, b, chatID)
 }
 
-// HandleClipDefault handles text message «🎬 Клип 30с».
-func (a *App) HandleClipDefault(ctx context.Context, b *bot.Bot, update *models.Update) {
-	chatID := getChatID(update)
-	if chatID == 0 {
-		return
-	}
-	a.sendClipAction(ctx, b, chatID, 30)
-}
-
-// HandleCallbackClip30 handles clip_30 inline button click.
-func (a *App) HandleCallbackClip30(ctx context.Context, b *bot.Bot, update *models.Update) {
+// HandleCallbackClip handles the «🎬 Клип» inline button.
+func (a *App) HandleCallbackClip(ctx context.Context, b *bot.Bot, update *models.Update) {
 	if update.CallbackQuery == nil {
 		return
 	}
 	chatID := getChatID(update)
-	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
-		CallbackQueryID: update.CallbackQuery.ID,
-	}); err != nil {
-		a.logger.Error("failed to answer callback query", slog.Any("err", err), slog.Int64("chat_id", chatID))
-	}
-
+	a.answerCallback(ctx, b, update.CallbackQuery.ID, "")
 	if chatID == 0 {
 		return
 	}
-
-	a.sendClipAction(ctx, b, chatID, 30)
+	a.startClip(ctx, b, chatID)
 }
 
-func (a *App) sendClipAction(ctx context.Context, b *bot.Bot, chatID int64, sec int) {
-	actionCtx, cancelAction := context.WithCancel(ctx)
-	defer cancelAction()
+// HandleCallbackClipStop handles the «⏹ Стоп» button of a recording message.
+func (a *App) HandleCallbackClipStop(ctx context.Context, b *bot.Bot, update *models.Update) {
+	cq := update.CallbackQuery
+	if cq == nil {
+		return
+	}
+	id := strings.TrimPrefix(cq.Data, clipStopPrefix)
+	chatID := getChatID(update)
+	messageID := 0
+	if cq.Message.Message != nil {
+		messageID = cq.Message.Message.ID
+	}
 
-	go func() {
-		_, _ = b.SendChatAction(actionCtx, &bot.SendChatActionParams{
-			ChatID: chatID,
-			Action: models.ChatActionUploadVideo,
-		})
-		ticker := time.NewTicker(4 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-actionCtx.Done():
-				return
-			case <-ticker.C:
-				_, _ = b.SendChatAction(actionCtx, &bot.SendChatActionParams{
-					ChatID: chatID,
-					Action: models.ChatActionUploadVideo,
-				})
-			}
+	a.clipMu.Lock()
+	pc, ok := a.clips[id]
+	if ok && pc.stopping {
+		a.clipMu.Unlock()
+		a.answerCallback(ctx, b, cq.ID, "Видео уже готовится")
+		return
+	}
+	if ok {
+		pc.stopping = true
+		pc.timer.Stop()
+	}
+	a.clipMu.Unlock()
+
+	a.answerCallback(ctx, b, cq.ID, "")
+	if chatID == 0 {
+		return
+	}
+	// Unknown here after a gateway restart: the button still carries the id, so the core is asked anyway.
+	a.finishClip(ctx, b, id, chatID, messageID)
+}
+
+func (a *App) startClip(ctx context.Context, b *bot.Bot, chatID int64) {
+	rec, err := a.coreClient.StartClip(ctx)
+	if err != nil {
+		switch {
+		case errors.Is(err, coreclient.ErrClipBusy):
+			a.sendSimpleMessage(ctx, b, chatID, "⏺ Уже идёт запись — дождитесь видео.")
+		case errors.Is(err, coreclient.ErrCameraOffline):
+			a.sendSimpleMessage(ctx, b, chatID, "📷 Камера сейчас недоступна. Попробуйте позже.")
+		default:
+			a.logger.Error("failed to start clip", slog.Any("err", err))
+			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Ядро умного дома недоступно. Попробуйте позже.")
 		}
+		return
+	}
+
+	msg, err := b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID: chatID,
+		Text:   fmt.Sprintf("⏺ Идёт запись… (до %d с)\nНажмите «⏹ Стоп», чтобы закончить.", int(rec.MaxDuration.Seconds())),
+		ReplyMarkup: &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{{Text: "⏹ Стоп", CallbackData: clipStopPrefix + rec.ID}},
+			},
+		},
+	})
+	messageID := 0
+	if err != nil {
+		a.logger.Error("failed to send clip recording message", slog.Any("err", err), slog.Int64("chat_id", chatID))
+	} else {
+		messageID = msg.ID
+	}
+
+	pc := &pendingClip{chatID: chatID, messageID: messageID}
+	a.clipMu.Lock()
+	a.clips[rec.ID] = pc
+	// The core stops ffmpeg at the max duration by itself; the gateway then fetches and sends the video.
+	pc.timer = a.afterFunc(rec.MaxDuration, func() { a.autoStopClip(b, rec.ID) })
+	a.clipMu.Unlock()
+}
+
+func (a *App) autoStopClip(b *bot.Bot, id string) {
+	a.clipMu.Lock()
+	pc, ok := a.clips[id]
+	if !ok || pc.stopping {
+		a.clipMu.Unlock()
+		return
+	}
+	pc.stopping = true
+	a.clipMu.Unlock()
+
+	a.finishClip(context.Background(), b, id, pc.chatID, pc.messageID)
+}
+
+// finishClip stops the recording in the core, sends the video and removes the recording message.
+func (a *App) finishClip(ctx context.Context, b *bot.Bot, id string, chatID int64, messageID int) {
+	defer func() {
+		a.clipMu.Lock()
+		delete(a.clips, id)
+		a.clipMu.Unlock()
 	}()
 
-	const maxClipBytes = 50 * 1024 * 1024 // 50 MB Telegram Bot API limit
-	clipBytes, err := a.coreClient.GetClip(ctx, sec, maxClipBytes)
-	cancelAction()
+	if messageID != 0 {
+		if _, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      "⏳ Готовлю видео…",
+		}); err != nil {
+			a.logger.Warn("failed to edit clip recording message", slog.Any("err", err), slog.Int64("chat_id", chatID))
+		}
+	}
+	if _, err := b.SendChatAction(ctx, &bot.SendChatActionParams{
+		ChatID: chatID,
+		Action: models.ChatActionUploadVideo,
+	}); err != nil {
+		a.logger.Error("failed to send chat action", slog.Any("err", err), slog.Int64("chat_id", chatID))
+	}
 
+	data, err := a.coreClient.StopClip(ctx, id)
 	if err != nil {
-		if errors.Is(err, coreclient.ErrRecorderDisabled) {
-			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Запись выключена. Включите запись (/rec on), чтобы сохранять клипы.")
-			return
+		var text string
+		switch {
+		case errors.Is(err, coreclient.ErrClipNotFound):
+			text = "Запись уже остановлена."
+		case errors.Is(err, coreclient.ErrClipEmpty):
+			text = "⚠️ Клип пустой: камера не успела отдать видео. Попробуйте записать подольше."
+		case errors.Is(err, coreclient.ErrClipFailed):
+			text = "⚠️ Не удалось записать клип. Попробуйте ещё раз."
+		default:
+			a.logger.Error("failed to stop clip", slog.String("clip_id", id), slog.Any("err", err))
+			text = "⚠️ Ядро умного дома недоступно. Попробуйте позже."
 		}
-		if errors.Is(err, coreclient.ErrNoSegments) {
-			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Нет доступных записей для создания клипа. Возможно, запись только началась.")
-			return
-		}
-		if errors.Is(err, coreclient.ErrCameraOffline) {
-			a.sendSimpleMessage(ctx, b, chatID, "📷 Камера сейчас недоступна. Попробуйте позже.")
-			return
-		}
-		var clipTooLarge *coreclient.ClipTooLargeError
-		if errors.As(err, &clipTooLarge) {
-			if clipTooLarge.MaxAllowedSeconds > 0 {
-				a.sendSimpleMessage(ctx, b, chatID, fmt.Sprintf("⚠️ Клип не помещается в лимит (50 МБ). Максимальная длительность: ~%d сек.", clipTooLarge.MaxAllowedSeconds))
-			} else {
-				a.sendSimpleMessage(ctx, b, chatID, "⚠️ Клип не помещается в лимит (50 МБ). Попробуйте запросить меньшую длительность.")
-			}
-			return
-		}
-		if errors.Is(err, coreclient.ErrClipFailed) {
-			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Не удалось собрать клип. Попробуйте ещё раз.")
-			return
-		}
-		if errors.Is(err, coreclient.ErrCoreUnavailable) {
-			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Ядро умного дома недоступно. Попробуйте позже.")
-			return
-		}
-
-		a.logger.Error("failed to get clip from core", slog.Any("err", err))
-		a.sendSimpleMessage(ctx, b, chatID, fmt.Sprintf("⚠️ Не удалось получить клип: %v", err))
+		a.replaceClipMessage(ctx, b, chatID, messageID, text)
 		return
 	}
 
-	width, height, duration := probeMP4(clipBytes, 1920, 1080, sec)
-
-	clipKeyboard := &models.InlineKeyboardMarkup{
-		InlineKeyboard: [][]models.InlineKeyboardButton{
-			{
-				{Text: "🎬 Ещё клип 30с", CallbackData: "clip_30"},
-				{Text: "📷 Фото", CallbackData: "photo"},
-			},
-			{
-				{Text: "📊 Статус", CallbackData: "status"},
-				{Text: "⏺ Запись", CallbackData: "rec_toggle"},
-			},
-		},
-	}
-
+	width, height, duration := probeMP4(data, 1280, 720, 0)
 	if _, err := b.SendVideo(ctx, &bot.SendVideoParams{
-		ChatID: chatID,
-		Video: &models.InputFileUpload{
-			Filename: fmt.Sprintf("clip_%ds.mp4", duration),
-			Data:     bytes.NewReader(clipBytes),
-		},
-		Duration:          duration,
+		ChatID:            chatID,
+		Video:             &models.InputFileUpload{Filename: "clip.mp4", Data: bytes.NewReader(data)},
 		Width:             width,
 		Height:            height,
+		Duration:          duration,
 		SupportsStreaming: true,
-		Caption:           fmt.Sprintf("🎬 Клип (%dс)", duration),
-		ReplyMarkup:       clipKeyboard,
+		ReplyMarkup: &models.InlineKeyboardMarkup{
+			InlineKeyboard: [][]models.InlineKeyboardButton{
+				{
+					{Text: "🎬 Ещё клип", CallbackData: "clip"},
+					{Text: "📷 Фото", CallbackData: "photo"},
+				},
+			},
+		},
 	}); err != nil {
-		a.logger.Error("failed to send video", slog.Any("err", err), slog.Int64("chat_id", chatID))
-	}
-}
-
-// HandleRec handles /rec [on|off].
-func (a *App) HandleRec(ctx context.Context, b *bot.Bot, update *models.Update) {
-	chatID := getChatID(update)
-	if chatID == 0 {
+		a.logger.Error("failed to send clip video", slog.Any("err", err), slog.Int64("chat_id", chatID))
+		a.replaceClipMessage(ctx, b, chatID, messageID, "⚠️ Не удалось отправить видео в Telegram.")
 		return
 	}
 
-	text := ""
-	if update.Message != nil {
-		text = update.Message.Text
-	}
-	arg := strings.ToLower(strings.TrimSpace(strings.TrimPrefix(text, "/rec")))
-
-	switch arg {
-	case "on":
-		a.setRecorderAction(ctx, b, chatID, true)
-	case "off":
-		a.setRecorderAction(ctx, b, chatID, false)
-	case "":
-		a.toggleRecorderAction(ctx, b, chatID)
-	default:
-		a.sendSimpleMessage(ctx, b, chatID, "Использование: /rec on или /rec off (или нажмите кнопку «⏺ Запись»)")
+	if messageID != 0 {
+		if _, err := b.DeleteMessage(ctx, &bot.DeleteMessageParams{ChatID: chatID, MessageID: messageID}); err != nil {
+			a.logger.Warn("failed to delete clip recording message", slog.Any("err", err), slog.Int64("chat_id", chatID))
+		}
 	}
 }
 
-// HandleRecToggle handles text message «⏺ Запись».
-func (a *App) HandleRecToggle(ctx context.Context, b *bot.Bot, update *models.Update) {
-	chatID := getChatID(update)
-	if chatID == 0 {
-		return
+// replaceClipMessage shows the outcome in place of the recording message, or as a new one if there is none.
+func (a *App) replaceClipMessage(ctx context.Context, b *bot.Bot, chatID int64, messageID int, text string) {
+	if messageID != 0 {
+		if _, err := b.EditMessageText(ctx, &bot.EditMessageTextParams{
+			ChatID:    chatID,
+			MessageID: messageID,
+			Text:      text,
+		}); err == nil {
+			return
+		}
 	}
-	a.toggleRecorderAction(ctx, b, chatID)
+	a.sendSimpleMessage(ctx, b, chatID, text)
 }
 
-// HandleCallbackRecToggle handles rec_toggle inline button click.
-func (a *App) HandleCallbackRecToggle(ctx context.Context, b *bot.Bot, update *models.Update) {
-	if update.CallbackQuery == nil {
-		return
-	}
-	chatID := getChatID(update)
+func (a *App) answerCallback(ctx context.Context, b *bot.Bot, callbackID, text string) {
 	if _, err := b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
-		CallbackQueryID: update.CallbackQuery.ID,
+		CallbackQueryID: callbackID,
+		Text:            text,
 	}); err != nil {
-		a.logger.Error("failed to answer callback query", slog.Any("err", err), slog.Int64("chat_id", chatID))
+		a.logger.Error("failed to answer callback query", slog.Any("err", err))
 	}
-	if chatID == 0 {
-		return
-	}
-	a.toggleRecorderAction(ctx, b, chatID)
-}
-
-func (a *App) setRecorderAction(ctx context.Context, b *bot.Bot, chatID int64, enabled bool) {
-	st, err := a.coreClient.SetRecorder(ctx, enabled)
-	if err != nil {
-		a.logger.Error("failed to set recorder state", slog.Any("err", err))
-		a.sendSimpleMessage(ctx, b, chatID, "⚠️ Ядро умного дома недоступно. Попробуйте позже.")
-		return
-	}
-
-	var msg string
-	if st.Enabled {
-		msg = "⏺ Запись включена"
-	} else {
-		msg = "⏹ Запись выключена"
-	}
-	a.sendSimpleMessage(ctx, b, chatID, msg)
-}
-
-func (a *App) toggleRecorderAction(ctx context.Context, b *bot.Bot, chatID int64) {
-	st, err := a.coreClient.GetStatus(ctx)
-	if err != nil {
-		a.logger.Error("failed to get status for recorder toggle", slog.Any("err", err))
-		a.sendSimpleMessage(ctx, b, chatID, "⚠️ Ядро умного дома недоступно. Попробуйте позже.")
-		return
-	}
-
-	nextState := true
-	if st.Recorder != nil {
-		nextState = !st.Recorder.Enabled
-	}
-	a.setRecorderAction(ctx, b, chatID, nextState)
 }
 
 func (a *App) sendSimpleMessage(ctx context.Context, b *bot.Bot, chatID int64, text string) {
-	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: chatID,
-		Text:   text,
-	}); err != nil {
+	if _, err := b.SendMessage(ctx, &bot.SendMessageParams{ChatID: chatID, Text: text}); err != nil {
 		a.logger.Error("failed to send telegram message", slog.Any("err", err), slog.Int64("chat_id", chatID))
 	}
 }
@@ -666,36 +633,6 @@ func formatStatusMessage(st *contract.StatusResponse) string {
 		camText = fmt.Sprintf("🔴 Недоступна (%s)", reason)
 	}
 
-	var recText string
-	if st.Recorder != nil {
-		if st.Recorder.Enabled {
-			recText = "🟢 Включена"
-		} else {
-			recText = "⏹ Выключена"
-		}
-	} else {
-		recText = "⚪️ Не настроена"
-	}
-
-	var archiveText string
-	if st.Archive != nil {
-		if st.Archive.Ok {
-			pending := ""
-			if st.Archive.PendingSegments != nil && *st.Archive.PendingSegments > 0 {
-				pending = fmt.Sprintf(" (в очереди: %d)", *st.Archive.PendingSegments)
-			}
-			archiveText = "🟢 Работает" + pending
-		} else {
-			errStr := "ошибка"
-			if st.Archive.Error != nil && *st.Archive.Error != "" {
-				errStr = *st.Archive.Error
-			}
-			archiveText = fmt.Sprintf("🔴 Ошибка (%s)", errStr)
-		}
-	} else {
-		archiveText = "⚪️ Не настроен"
-	}
-
 	var storageText string
 	if st.Storage.Error != nil && *st.Storage.Error != "" {
 		storageText = fmt.Sprintf("🔴 Ошибка (%s)", *st.Storage.Error)
@@ -706,6 +643,5 @@ func formatStatusMessage(st *contract.StatusResponse) string {
 		)
 	}
 
-	return fmt.Sprintf("📊 Статус системы:\n\n📷 Камера: %s\n⏺ Запись: %s\n📦 Архив: %s\n💾 Диск: %s",
-		camText, recText, archiveText, storageText)
+	return fmt.Sprintf("📊 Статус системы:\n\n📷 Камера: %s\n💾 Диск: %s", camText, storageText)
 }

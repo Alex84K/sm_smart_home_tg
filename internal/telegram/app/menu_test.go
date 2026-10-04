@@ -94,22 +94,9 @@ func setupTestApp(t *testing.T, coreHandler http.HandlerFunc, onCall ...func(end
 			return
 		}
 
-		if strings.HasSuffix(r.URL.Path, "/sendPhoto") {
+		if strings.HasSuffix(r.URL.Path, "/sendPhoto") || strings.HasSuffix(r.URL.Path, "/sendVideo") {
 			msg := models.Message{
 				ID:   2,
-				Chat: models.Chat{ID: 100},
-			}
-			raw, _ := json.Marshal(msg)
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"ok":     true,
-				"result": json.RawMessage(raw),
-			})
-			return
-		}
-
-		if strings.HasSuffix(r.URL.Path, "/sendVideo") {
-			msg := models.Message{
-				ID:   3,
 				Chat: models.Chat{ID: 100},
 			}
 			raw, _ := json.Marshal(msg)
@@ -195,18 +182,15 @@ func TestHandleMenu_InlineKeyboardHasPhotoAndStatus(t *testing.T) {
 	}
 
 	// Verify buttons
+	buttons := inlineKb[0].([]any)
 	var callbackData []string
-	for _, row := range inlineKb {
-		for _, b := range row.([]any) {
-			btnMap := b.(map[string]any)
-			callbackData = append(callbackData, btnMap["callback_data"].(string))
-		}
+	for _, b := range buttons {
+		btnMap := b.(map[string]any)
+		callbackData = append(callbackData, btnMap["callback_data"].(string))
 	}
 
 	hasPhoto := false
 	hasStatus := false
-	hasClip := false
-	hasRec := false
 	for _, cd := range callbackData {
 		if cd == "photo" {
 			hasPhoto = true
@@ -214,16 +198,10 @@ func TestHandleMenu_InlineKeyboardHasPhotoAndStatus(t *testing.T) {
 		if cd == "status" {
 			hasStatus = true
 		}
-		if cd == "clip_30" {
-			hasClip = true
-		}
-		if cd == "rec_toggle" {
-			hasRec = true
-		}
 	}
 
-	if !hasPhoto || !hasStatus || !hasClip || !hasRec {
-		t.Fatalf("expected 'photo', 'status', 'clip_30', and 'rec_toggle' inline buttons, got: %v", callbackData)
+	if !hasPhoto || !hasStatus {
+		t.Fatalf("expected both 'photo' and 'status' inline buttons, got: %v", callbackData)
 	}
 }
 
@@ -268,18 +246,15 @@ func TestHandleStart_SetsReplyKeyboardAndShowsMenu(t *testing.T) {
 		t.Fatalf("expected keyboard array in reply_markup, got: %v", rawMarkup)
 	}
 
+	firstRow := kb[0].([]any)
 	var buttonTexts []string
-	for _, row := range kb {
-		for _, b := range row.([]any) {
-			btnMap := b.(map[string]any)
-			buttonTexts = append(buttonTexts, btnMap["text"].(string))
-		}
+	for _, b := range firstRow {
+		btnMap := b.(map[string]any)
+		buttonTexts = append(buttonTexts, btnMap["text"].(string))
 	}
 
 	hasPhotoText := false
 	hasStatusText := false
-	hasClipText := false
-	hasRecText := false
 	for _, text := range buttonTexts {
 		if strings.Contains(text, "Фото") {
 			hasPhotoText = true
@@ -287,16 +262,10 @@ func TestHandleStart_SetsReplyKeyboardAndShowsMenu(t *testing.T) {
 		if strings.Contains(text, "Статус") {
 			hasStatusText = true
 		}
-		if strings.Contains(text, "Клип") {
-			hasClipText = true
-		}
-		if strings.Contains(text, "Запись") {
-			hasRecText = true
-		}
 	}
 
-	if !hasPhotoText || !hasStatusText || !hasClipText || !hasRecText {
-		t.Fatalf("expected reply keyboard to contain 'Фото', 'Статус', 'Клип', and 'Запись', got: %v", buttonTexts)
+	if !hasPhotoText || !hasStatusText {
+		t.Fatalf("expected reply keyboard to contain 'Фото' and 'Статус', got: %v", buttonTexts)
 	}
 }
 

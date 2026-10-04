@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Alex84K/sm_smart_home_core_go/contract"
 	"github.com/Alex84K/sm_smart_home_tg/internal/coreclient"
@@ -103,82 +105,94 @@ func TestCoreClient(t *testing.T) {
 			t.Fatalf("expected ErrCoreUnavailable, got %v", err)
 		}
 	})
+}
 
-	t.Run("GetClip success", func(t *testing.T) {
-		returnStatus = http.StatusOK
-		responseBody = []byte("mp4-data")
+func TestCoreClientClips(t *testing.T) {
+	var gotPath, gotMethod string
+	var returnStatus int
+	var responseBody []byte
 
-		clip, err := client.GetClip(ctx, 30, 50*1024*1024)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		if returnStatus == http.StatusOK {
+			w.Header().Set("Content-Type", "video/mp4")
+		} else {
+			w.Header().Set("Content-Type", "application/json")
+		}
+		w.WriteHeader(returnStatus)
+		_, _ = w.Write(responseBody)
+	}))
+	defer ts.Close()
+
+	client, err := coreclient.New(ts.URL, "test-token")
+	if err != nil {
+		t.Fatalf("coreclient.New failed: %v", err)
+	}
+	ctx := context.Background()
+	errBody, _ := json.Marshal(contract.ErrorResponse{Error: "x"})
+
+	t.Run("StartClip success", func(t *testing.T) {
+		returnStatus = http.StatusCreated
+		responseBody, _ = json.Marshal(contract.ClipRecording{Id: "abc", MaxSeconds: 60})
+
+		rec, err := client.StartClip(ctx)
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("StartClip: %v", err)
 		}
-		if string(clip) != "mp4-data" {
-			t.Fatalf("expected mp4-data, got %s", string(clip))
+		if gotMethod != http.MethodPost || gotPath != "/api/clips" {
+			t.Fatalf("unexpected request %s %s", gotMethod, gotPath)
 		}
-	})
-
-	t.Run("GetClip recorder disabled 409", func(t *testing.T) {
-		returnStatus = http.StatusConflict
-		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "recorder disabled"})
-		responseBody = errResp
-
-		_, err := client.GetClip(ctx, 30, 0)
-		if !errors.Is(err, coreclient.ErrRecorderDisabled) {
-			t.Fatalf("expected ErrRecorderDisabled, got %v", err)
+		if rec.ID != "abc" || rec.MaxDuration != 60*time.Second {
+			t.Fatalf("unexpected recording: %+v", rec)
 		}
 	})
 
-	t.Run("GetClip no segments 503", func(t *testing.T) {
-		returnStatus = http.StatusServiceUnavailable
-		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "no segments available"})
-		responseBody = errResp
-
-		_, err := client.GetClip(ctx, 30, 0)
-		if !errors.Is(err, coreclient.ErrNoSegments) {
-			t.Fatalf("expected ErrNoSegments, got %v", err)
-		}
-	})
-
-	t.Run("GetClip clip too large 413", func(t *testing.T) {
-		returnStatus = http.StatusRequestEntityTooLarge
-		errResp, _ := json.Marshal(contract.ClipTooLargeResponse{
-			Error:             "clip too large",
-			MaxAllowedSeconds: 25,
+	startErrors := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusConflict, coreclient.ErrClipBusy},
+		{http.StatusServiceUnavailable, coreclient.ErrCameraOffline},
+		{http.StatusBadGateway, coreclient.ErrCoreUnavailable},
+	}
+	for _, tt := range startErrors {
+		t.Run(fmt.Sprintf("StartClip %d", tt.status), func(t *testing.T) {
+			returnStatus, responseBody = tt.status, errBody
+			if _, err := client.StartClip(ctx); !errors.Is(err, tt.want) {
+				t.Fatalf("got %v, want %v", err, tt.want)
+			}
 		})
-		responseBody = errResp
+	}
 
-		_, err := client.GetClip(ctx, 30, 50*1024*1024)
-		var tooLarge *coreclient.ClipTooLargeError
-		if !errors.As(err, &tooLarge) {
-			t.Fatalf("expected ClipTooLargeError, got %v", err)
-		}
-		if tooLarge.MaxAllowedSeconds != 25 {
-			t.Fatalf("expected MaxAllowedSeconds 25, got %d", tooLarge.MaxAllowedSeconds)
-		}
-	})
+	t.Run("StopClip success", func(t *testing.T) {
+		returnStatus, responseBody = http.StatusOK, []byte("mp4-data")
 
-	t.Run("GetClip generation failed 500", func(t *testing.T) {
-		returnStatus = http.StatusInternalServerError
-		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "clip generation failed"})
-		responseBody = errResp
-
-		_, err := client.GetClip(ctx, 30, 0)
-		if !errors.Is(err, coreclient.ErrClipFailed) {
-			t.Fatalf("expected ErrClipFailed, got %v", err)
-		}
-	})
-
-	t.Run("SetRecorder success", func(t *testing.T) {
-		returnStatus = http.StatusOK
-		recResp, _ := json.Marshal(contract.RecorderStatus{Enabled: true})
-		responseBody = recResp
-
-		st, err := client.SetRecorder(ctx, true)
+		data, err := client.StopClip(ctx, "abc")
 		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
+			t.Fatalf("StopClip: %v", err)
 		}
-		if !st.Enabled {
-			t.Fatal("expected recorder enabled")
+		if gotMethod != http.MethodPost || gotPath != "/api/clips/abc/stop" {
+			t.Fatalf("unexpected request %s %s", gotMethod, gotPath)
+		}
+		if string(data) != "mp4-data" {
+			t.Fatalf("unexpected data %q", data)
 		}
 	})
+
+	stopErrors := []struct {
+		status int
+		want   error
+	}{
+		{http.StatusNotFound, coreclient.ErrClipNotFound},
+		{http.StatusUnprocessableEntity, coreclient.ErrClipEmpty},
+		{http.StatusInternalServerError, coreclient.ErrClipFailed},
+	}
+	for _, tt := range stopErrors {
+		t.Run(fmt.Sprintf("StopClip %d", tt.status), func(t *testing.T) {
+			returnStatus, responseBody = tt.status, errBody
+			if _, err := client.StopClip(ctx, "abc"); !errors.Is(err, tt.want) {
+				t.Fatalf("got %v, want %v", err, tt.want)
+			}
+		})
+	}
 }
