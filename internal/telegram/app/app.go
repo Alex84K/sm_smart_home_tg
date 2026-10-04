@@ -489,6 +489,10 @@ func (a *App) sendClipAction(ctx context.Context, b *bot.Bot, chatID int64, sec 
 			}
 			return
 		}
+		if errors.Is(err, coreclient.ErrClipFailed) {
+			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Не удалось собрать клип. Попробуйте ещё раз.")
+			return
+		}
 		if errors.Is(err, coreclient.ErrCoreUnavailable) {
 			a.sendSimpleMessage(ctx, b, chatID, "⚠️ Ядро умного дома недоступно. Попробуйте позже.")
 			return

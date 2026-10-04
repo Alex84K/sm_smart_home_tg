@@ -139,10 +139,11 @@ func TestCoreClient(t *testing.T) {
 		}
 	})
 
-	t.Run("GetClip clip too large 400", func(t *testing.T) {
-		returnStatus = http.StatusBadRequest
-		errResp, _ := json.Marshal(contract.ErrorResponse{
-			Error: "media: clip size 60000000 bytes exceeds max_bytes 50000000: max allowed duration is ~25 seconds",
+	t.Run("GetClip clip too large 413", func(t *testing.T) {
+		returnStatus = http.StatusRequestEntityTooLarge
+		errResp, _ := json.Marshal(contract.ClipTooLargeResponse{
+			Error:             "clip too large",
+			MaxAllowedSeconds: 25,
 		})
 		responseBody = errResp
 
@@ -153,6 +154,17 @@ func TestCoreClient(t *testing.T) {
 		}
 		if tooLarge.MaxAllowedSeconds != 25 {
 			t.Fatalf("expected MaxAllowedSeconds 25, got %d", tooLarge.MaxAllowedSeconds)
+		}
+	})
+
+	t.Run("GetClip generation failed 500", func(t *testing.T) {
+		returnStatus = http.StatusInternalServerError
+		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "clip generation failed"})
+		responseBody = errResp
+
+		_, err := client.GetClip(ctx, 30, 0)
+		if !errors.Is(err, coreclient.ErrClipFailed) {
+			t.Fatalf("expected ErrClipFailed, got %v", err)
 		}
 	})
 

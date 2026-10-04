@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/Alex84K/sm_smart_home_core_go/contract"
@@ -18,6 +17,7 @@ var (
 	ErrUnauthorized     = errors.New("unauthorized client token")
 	ErrRecorderDisabled = errors.New("recorder is disabled")
 	ErrNoSegments       = errors.New("no segments available")
+	ErrClipFailed       = errors.New("clip generation failed")
 )
 
 // ClipTooLargeError indicates requested clip duration exceeded size limit.
@@ -137,28 +137,25 @@ func (c *Client) GetClip(ctx context.Context, sec int, maxBytes int64) ([]byte, 
 		return nil, ErrRecorderDisabled
 	case http.StatusServiceUnavailable:
 		if resp.JSON503 != nil && resp.JSON503.Error != "" {
-			if strings.Contains(strings.ToLower(resp.JSON503.Error), "camera") {
-				return nil, fmt.Errorf("%w: %s", ErrCameraOffline, resp.JSON503.Error)
-			}
 			return nil, fmt.Errorf("%w: %s", ErrNoSegments, resp.JSON503.Error)
 		}
 		return nil, ErrNoSegments
+	case http.StatusRequestEntityTooLarge:
+		if resp.JSON413 != nil {
+			return nil, &ClipTooLargeError{
+				Message:           resp.JSON413.Error,
+				MaxAllowedSeconds: resp.JSON413.MaxAllowedSeconds,
+			}
+		}
+		return nil, &ClipTooLargeError{Message: "clip too large"}
 	case http.StatusBadRequest:
 		msg := "bad request"
 		if resp.JSON400 != nil && resp.JSON400.Error != "" {
 			msg = resp.JSON400.Error
 		}
-		if strings.Contains(msg, "exceeds max_bytes") {
-			secLimit := 0
-			if idx := strings.Index(msg, "max allowed duration is ~"); idx != -1 {
-				_, _ = fmt.Sscanf(msg[idx:], "max allowed duration is ~%d", &secLimit)
-			}
-			return nil, &ClipTooLargeError{
-				Message:           msg,
-				MaxAllowedSeconds: secLimit,
-			}
-		}
 		return nil, errors.New(msg)
+	case http.StatusInternalServerError:
+		return nil, ErrClipFailed
 	default:
 		return nil, fmt.Errorf("%w: status %d", ErrCoreUnavailable, resp.StatusCode())
 	}

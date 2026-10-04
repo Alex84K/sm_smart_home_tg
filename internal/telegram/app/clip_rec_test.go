@@ -189,9 +189,10 @@ func TestHandleClip_ClipTooLarge(t *testing.T) {
 	app, calls, mu := setupTestApp(t, func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasPrefix(r.URL.Path, "/api/clip") {
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadRequest)
-			_ = json.NewEncoder(w).Encode(contract.ErrorResponse{
-				Error: "media: clip size 60000000 bytes exceeds max_bytes 50000000: max allowed duration is ~22 seconds",
+			w.WriteHeader(http.StatusRequestEntityTooLarge)
+			_ = json.NewEncoder(w).Encode(contract.ClipTooLargeResponse{
+				Error:             "clip too large",
+				MaxAllowedSeconds: 22,
 			})
 			return
 		}
