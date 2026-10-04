@@ -4,13 +4,12 @@ FROM golang:alpine AS builder
 RUN apk add --no-cache git
 ARG GOPRIVATE=github.com/Alex84K/*
 ENV GOPRIVATE=${GOPRIVATE}
+ENV GOPROXY=https://proxy.golang.org,https://goproxy.io,direct
 WORKDIR /src
 
 COPY go.mod go.sum ./
-RUN --mount=type=secret,id=netrc,target=/root/.netrc,required=false go mod download
-
 COPY . .
-RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/tg-gateway ./cmd/tg-gateway
+RUN --mount=type=secret,id=netrc,target=/root/.netrc,required=false CGO_ENABLED=0 go build -ldflags="-s -w" -o /out/tg-gateway ./cmd/tg-gateway
 
 FROM alpine:latest
 RUN apk add --no-cache ca-certificates tzdata
