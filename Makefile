@@ -1,5 +1,7 @@
 .PHONY: help lint test check build docker run up up-dev down logs contract-update
 
+CONTRACT_PATH ?= ../sm_smart_home_core_go/contract
+
 help:
 	@echo "Available targets:"
 	@echo "  help            - Show this help message"
@@ -28,7 +30,7 @@ build:
 	go build -o bin/tg-gateway ./cmd/tg-gateway
 
 docker:
-	docker build --build-context contract=../core_syst_go/contract -t simple-smart-home-tg-gateway:latest .
+	docker build --build-context contract=$(CONTRACT_PATH) -t simple-smart-home-tg-gateway:latest .
 
 run: build
 	./bin/tg-gateway
