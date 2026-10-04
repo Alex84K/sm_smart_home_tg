@@ -26,6 +26,13 @@ Go-код Telegram-шлюза Simple Smart Home: прием команд пол�
 - Перед коммитом: `make check` (линтер + тесты с флагом `-race`, включая архитектурный тест). Коммить только при зелёном `make check`.
 - Новые команды разработки — новой целью в `Makefile`, а не инструкцией в тексте.
 
+## Деплой на homelab
+
+Вручную по SSH, автоматики нет (`../agentic_docs/brainstorm/open-questions.md`, раздел GitOps). Клон — `~/homelab/simple_smart_home/sm_smart_home_tg` рядом с клоном ядра `sm_smart_home_core_go` (нужен для сборки, пока контракт берётся из соседней папки); `.env` лежит только в клоне.
+1. Ядро уже запущено (`smarthome_backend` создаёт его compose).
+2. `git pull`
+3. `docker compose up -d --build` (без `--build` контейнер поднимется из старого образа)
+
 ## Жёсткие границы
 
 - Шлюз общается с ядром ТОЛЬКО по сети через HTTP API и шину событий (ADR-0017).
