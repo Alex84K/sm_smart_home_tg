@@ -103,4 +103,70 @@ func TestCoreClient(t *testing.T) {
 			t.Fatalf("expected ErrCoreUnavailable, got %v", err)
 		}
 	})
+
+	t.Run("GetClip success", func(t *testing.T) {
+		returnStatus = http.StatusOK
+		responseBody = []byte("mp4-data")
+
+		clip, err := client.GetClip(ctx, 30, 50*1024*1024)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if string(clip) != "mp4-data" {
+			t.Fatalf("expected mp4-data, got %s", string(clip))
+		}
+	})
+
+	t.Run("GetClip recorder disabled 409", func(t *testing.T) {
+		returnStatus = http.StatusConflict
+		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "recorder disabled"})
+		responseBody = errResp
+
+		_, err := client.GetClip(ctx, 30, 0)
+		if !errors.Is(err, coreclient.ErrRecorderDisabled) {
+			t.Fatalf("expected ErrRecorderDisabled, got %v", err)
+		}
+	})
+
+	t.Run("GetClip no segments 503", func(t *testing.T) {
+		returnStatus = http.StatusServiceUnavailable
+		errResp, _ := json.Marshal(contract.ErrorResponse{Error: "no segments available"})
+		responseBody = errResp
+
+		_, err := client.GetClip(ctx, 30, 0)
+		if !errors.Is(err, coreclient.ErrNoSegments) {
+			t.Fatalf("expected ErrNoSegments, got %v", err)
+		}
+	})
+
+	t.Run("GetClip clip too large 400", func(t *testing.T) {
+		returnStatus = http.StatusBadRequest
+		errResp, _ := json.Marshal(contract.ErrorResponse{
+			Error: "media: clip size 60000000 bytes exceeds max_bytes 50000000: max allowed duration is ~25 seconds",
+		})
+		responseBody = errResp
+
+		_, err := client.GetClip(ctx, 30, 50*1024*1024)
+		var tooLarge *coreclient.ClipTooLargeError
+		if !errors.As(err, &tooLarge) {
+			t.Fatalf("expected ClipTooLargeError, got %v", err)
+		}
+		if tooLarge.MaxAllowedSeconds != 25 {
+			t.Fatalf("expected MaxAllowedSeconds 25, got %d", tooLarge.MaxAllowedSeconds)
+		}
+	})
+
+	t.Run("SetRecorder success", func(t *testing.T) {
+		returnStatus = http.StatusOK
+		recResp, _ := json.Marshal(contract.RecorderStatus{Enabled: true})
+		responseBody = recResp
+
+		st, err := client.SetRecorder(ctx, true)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !st.Enabled {
+			t.Fatal("expected recorder enabled")
+		}
+	})
 }
