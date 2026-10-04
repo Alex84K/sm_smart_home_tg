@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: Dockerfile
       additional_contexts:
-        contract: ../../core_syst_go/contract
+        contract: ${CONTRACT_PATH:-../../sm_smart_home_core_go/contract}
     restart: unless-stopped
     networks:
       - smarthome_backend
