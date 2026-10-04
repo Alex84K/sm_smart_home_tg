@@ -1,0 +1,54 @@
+.PHONY: help lint test check build docker run up up-dev down logs contract-update
+
+help:
+	@echo "Available targets:"
+	@echo "  help            - Show this help message"
+	@echo "  lint            - Run golangci-lint"
+	@echo "  test            - Run unit tests and architecture checks with -race"
+	@echo "  check           - Run lint and test"
+	@echo "  build           - Compile tg-gateway binary into bin/"
+	@echo "  docker          - Build Docker image for tg-gateway"
+	@echo "  run             - Run tg-gateway locally with .env"
+	@echo "  up              - Start tg-gateway via docker-compose (homelab mode)"
+	@echo "  up-dev          - Start tg-gateway via docker-compose.dev.yml (desktop dev mode)"
+	@echo "  down            - Stop services via docker-compose"
+	@echo "  logs            - Tail service logs via docker-compose"
+	@echo "  contract-update - Update contract module (usage: make contract-update VERSION=vX.Y.Z)"
+
+lint:
+	go tool golangci-lint run
+
+test:
+	go test -race ./...
+
+check: lint test
+
+build:
+	mkdir -p bin
+	go build -o bin/tg-gateway ./cmd/tg-gateway
+
+docker:
+	docker build --build-context contract=../core_syst_go/contract -t simple-smart-home-tg-gateway:latest .
+
+run: build
+	./bin/tg-gateway
+
+up:
+	docker compose --env-file .env -f deploy/docker-compose.yml up -d
+
+up-dev:
+	docker compose --env-file .env -f deploy/docker-compose.dev.yml up -d
+
+down:
+	docker compose -f deploy/docker-compose.yml -f deploy/docker-compose.dev.yml down
+
+logs:
+	docker compose -f deploy/docker-compose.yml logs -f
+
+contract-update:
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Error: VERSION is required (e.g. make contract-update VERSION=v0.1.0)"; \
+		exit 1; \
+	fi
+	go get github.com/Alex84K/core_syst_go/contract@$(VERSION)
+	go mod tidy

@@ -1,0 +1,3 @@
+# Планы, требования и ADR — в общем OpenSpec store (репозиторий agentic_docs, ADR-0013).
+# Здесь только указатель: openspec и /opsx:* из этого репозитория работают с ним.
+store: simple-smart-home
