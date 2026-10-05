@@ -5,10 +5,12 @@ go 1.26.4
 tool github.com/golangci/golangci-lint/cmd/golangci-lint
 
 require (
-	github.com/Alex84K/sm_smart_home_core_go/contract v0.5.0
+	github.com/Alex84K/sm_smart_home_core_go/contract v0.6.0
+	github.com/eclipse/paho.mqtt.golang v1.5.1
 	github.com/go-telegram/bot v1.27.0
 	github.com/joho/godotenv v1.5.1
 	golang.org/x/sync v0.19.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
@@ -51,7 +53,6 @@ require (
 	github.com/daixiang0/gci v0.13.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/denis-tingaikin/go-header v0.5.0 // indirect
-	github.com/eclipse/paho.mqtt.golang v1.5.1 // indirect
 	github.com/ettle/strcase v0.2.0 // indirect
 	github.com/fatih/color v1.18.0 // indirect
 	github.com/fatih/structtag v1.2.0 // indirect
@@ -200,7 +201,6 @@ require (
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	gopkg.in/yaml.v3 v3.0.1 // indirect
 	honnef.co/go/tools v0.6.1 // indirect
 	mvdan.cc/gofumpt v0.7.0 // indirect
 	mvdan.cc/unparam v0.0.0-20240528143540-8a5130ca722f // indirect
