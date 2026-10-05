@@ -12,10 +12,12 @@ import (
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
+	"golang.org/x/sync/errgroup"
 
 	"github.com/Alex84K/sm_smart_home_core_go/contract"
 	"github.com/Alex84K/sm_smart_home_tg/internal/coreclient"
 	"github.com/Alex84K/sm_smart_home_tg/internal/platform/config"
+	"github.com/Alex84K/sm_smart_home_tg/internal/platform/mqtt"
 )
 
 // Clock provides current time, abstracted for deterministic testing (CONVENTIONS.md).
@@ -61,9 +63,12 @@ func BotErrorsHandler(logger *slog.Logger, clock Clock) bot.ErrorsHandler {
 
 // App is the composition root for the Telegram gateway service (ADR-0016).
 type App struct {
-	bot        *bot.Bot
-	coreClient *coreclient.Client
-	logger     *slog.Logger
+	bot             *bot.Bot
+	coreClient      *coreclient.Client
+	mqttClient      *mqtt.Client
+	alertChatID     int64
+	routingPatterns []string
+	logger          *slog.Logger
 
 	// afterFunc schedules the auto-stop of a clip; replaced in tests.
 	afterFunc func(d time.Duration, f func()) *time.Timer
@@ -93,11 +98,36 @@ func New(cfg *config.TGConfig, logger *slog.Logger) (*App, error) {
 		return nil, fmt.Errorf("tg-app: coreclient: %w", err)
 	}
 
+	var mqttClient *mqtt.Client
+	if cfg.MQTTURL != "" {
+		var err error
+		mqttClient, err = mqtt.NewClient(mqtt.Config{
+			Broker:       cfg.MQTTURL,
+			ClientID:     "tg-gateway",
+			Username:     cfg.MQTTUser,
+			Password:     cfg.MQTTPassword,
+			CleanSession: false,
+			Logger:       logger,
+		})
+		if err != nil {
+			return nil, fmt.Errorf("tg-app: mqtt: %w", err)
+		}
+	}
+
 	app := &App{
-		coreClient: client,
-		logger:     logger,
-		afterFunc:  time.AfterFunc,
-		clips:      make(map[string]*pendingClip),
+		coreClient:      client,
+		mqttClient:      mqttClient,
+		alertChatID:     cfg.AlertChatID,
+		routingPatterns: cfg.RoutingTelegram,
+		logger:          logger,
+		afterFunc:       time.AfterFunc,
+		clips:           make(map[string]*pendingClip),
+	}
+
+	if mqttClient != nil {
+		if err := client.SubscribeEvents(context.Background(), mqttClient, app.HandleEvent); err != nil {
+			return nil, fmt.Errorf("tg-app: subscribe events: %w", err)
+		}
 	}
 
 	opts := []bot.Option{
@@ -148,11 +178,22 @@ func NewWithDeps(coreClient *coreclient.Client, logger *slog.Logger) *App {
 		logger = slog.Default()
 	}
 	return &App{
-		coreClient: coreClient,
-		logger:     logger,
-		afterFunc:  time.AfterFunc,
-		clips:      make(map[string]*pendingClip),
+		coreClient:      coreClient,
+		routingPatterns: []string{"camera/*"},
+		logger:          logger,
+		afterFunc:       time.AfterFunc,
+		clips:           make(map[string]*pendingClip),
 	}
+}
+
+// SetAlertChatID sets the target chat for system alerts (useful in tests).
+func (a *App) SetAlertChatID(id int64) {
+	a.alertChatID = id
+}
+
+// SetRouting sets the routing patterns for events (useful in tests).
+func (a *App) SetRouting(patterns []string) {
+	a.routingPatterns = patterns
 }
 
 // SetBot sets the bot instance on App.
@@ -165,7 +206,30 @@ func (a *App) Bot() *bot.Bot {
 	return a.bot
 }
 
-// Run starts the long-polling Telegram bot (run.Runner).
+// HandleEvent processes an event from core, checking routing patterns and sending alert to Telegram.
+func (a *App) HandleEvent(env contract.EventEnvelope) {
+	if !MatchesRouting(a.routingPatterns, env.Kind) {
+		a.logger.Debug("telegram: event dropped by routing filter", slog.String("kind", env.Kind))
+		return
+	}
+	if a.alertChatID == 0 {
+		a.logger.Warn("telegram: alert received but TELEGRAM_ALERT_CHAT_ID is not configured", slog.String("kind", env.Kind), slog.String("text", env.Text))
+		return
+	}
+
+	a.logger.Info("telegram: delivering alert to chat", slog.Int64("chat_id", a.alertChatID), slog.String("kind", env.Kind), slog.String("text", env.Text))
+	if a.bot != nil {
+		_, err := a.bot.SendMessage(context.Background(), &bot.SendMessageParams{
+			ChatID: a.alertChatID,
+			Text:   env.Text,
+		})
+		if err != nil {
+			a.logger.Error("telegram: failed to send alert message", slog.Int64("chat_id", a.alertChatID), slog.Any("err", err))
+		}
+	}
+}
+
+// Run starts the long-polling Telegram bot and MQTT client (run.Runner).
 func (a *App) Run(ctx context.Context) error {
 	a.logger.Info("starting telegram gateway bot")
 
@@ -180,9 +244,22 @@ func (a *App) Run(ctx context.Context) error {
 		a.logger.Warn("failed to set telegram bot commands", slog.Any("err", err))
 	}
 
-	a.bot.Start(ctx)
+	eg, egCtx := errgroup.WithContext(ctx)
+
+	if a.mqttClient != nil {
+		eg.Go(func() error {
+			return a.mqttClient.Run(egCtx)
+		})
+	}
+
+	eg.Go(func() error {
+		a.bot.Start(egCtx)
+		return nil
+	})
+
+	err := eg.Wait()
 	a.logger.Info("telegram gateway bot stopped")
-	return nil
+	return err
 }
 
 func defaultReplyKeyboard() *models.ReplyKeyboardMarkup {
