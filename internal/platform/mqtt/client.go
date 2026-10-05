@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -92,6 +93,13 @@ func NewClient(cfg Config) (*Client, error) {
 		opts.SetPassword(cfg.Password)
 	}
 
+	// Messages queued in the persistent session arrive right after CONNACK, before
+	// subscriptions are renewed, so they are dispatched by the default handler that
+	// exists before Connect. Subscriptions carry no own callbacks.
+	opts.SetDefaultPublishHandler(func(_ paho.Client, msg paho.Message) {
+		c.dispatch(msg.Topic(), msg.Payload())
+	})
+
 	opts.SetOnConnectHandler(func(cl paho.Client) {
 		c.connected.Store(true)
 		c.log.Info("mqtt: connected to broker", "broker", cfg.Broker, "client_id", cfg.ClientID)
@@ -99,18 +107,14 @@ func NewClient(cfg Config) (*Client, error) {
 		c.subsMu.RLock()
 		defer c.subsMu.RUnlock()
 		for _, s := range c.subs {
-			sub := s
-			pahoHandler := func(_ paho.Client, msg paho.Message) {
-				sub.handler(msg.Topic(), msg.Payload())
-			}
-			token := cl.Subscribe(sub.topic, sub.qos, pahoHandler)
+			token := cl.Subscribe(s.topic, s.qos, nil)
 			go func(t string) {
 				if token.WaitTimeout(cfg.ConnectTimeout) && token.Error() != nil {
 					c.log.Warn("mqtt: failed to subscribe on connect", "topic", t, "err", token.Error())
 				} else {
 					c.log.Info("mqtt: subscribed to topic", "topic", t)
 				}
-			}(sub.topic)
+			}(s.topic)
 		}
 	})
 
@@ -182,11 +186,7 @@ func (c *Client) Subscribe(ctx context.Context, topic string, qos byte, handler 
 	c.subsMu.Unlock()
 
 	if c.IsConnected() {
-		pahoHandler := func(_ paho.Client, msg paho.Message) {
-			handler(msg.Topic(), msg.Payload())
-		}
-
-		token := c.pahoClient.Subscribe(topic, qos, pahoHandler)
+		token := c.pahoClient.Subscribe(topic, qos, nil)
 
 		done := make(chan struct{})
 		go func() {
@@ -202,4 +202,39 @@ func (c *Client) Subscribe(ctx context.Context, topic string, qos byte, handler 
 		}
 	}
 	return nil
+}
+
+// dispatch delivers a message to the handlers of all subscriptions whose filter matches the topic.
+func (c *Client) dispatch(topic string, payload []byte) {
+	c.subsMu.RLock()
+	defer c.subsMu.RUnlock()
+
+	delivered := false
+	for _, s := range c.subs {
+		if topicMatches(s.topic, topic) {
+			s.handler(topic, payload)
+			delivered = true
+		}
+	}
+	if !delivered {
+		c.log.Warn("mqtt: message without matching subscription dropped", "topic", topic)
+	}
+}
+
+// topicMatches reports whether topic matches an MQTT filter with "+" and "#" wildcards.
+func topicMatches(filter, topic string) bool {
+	fl := strings.Split(filter, "/")
+	tl := strings.Split(topic, "/")
+	for i, f := range fl {
+		if f == "#" {
+			return true
+		}
+		if i >= len(tl) {
+			return false
+		}
+		if f != "+" && f != tl[i] {
+			return false
+		}
+	}
+	return len(fl) == len(tl)
 }
