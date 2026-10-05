@@ -196,3 +196,61 @@ func TestCoreClientClips(t *testing.T) {
 		})
 	}
 }
+
+type fakeSubscriber struct {
+	topic   string
+	qos     byte
+	handler func(string, []byte)
+}
+
+func (f *fakeSubscriber) Subscribe(_ context.Context, topic string, qos byte, handler func(string, []byte)) error {
+	f.topic = topic
+	f.qos = qos
+	f.handler = handler
+	return nil
+}
+
+func TestSubscribeEvents(t *testing.T) {
+	client := coreclient.NewWithInterface(nil)
+	sub := &fakeSubscriber{}
+
+	var received []contract.EventEnvelope
+	err := client.SubscribeEvents(context.Background(), sub, func(e contract.EventEnvelope) {
+		received = append(received, e)
+	})
+	if err != nil {
+		t.Fatalf("SubscribeEvents failed: %v", err)
+	}
+
+	if sub.topic != "sh/events/#" {
+		t.Errorf("expected topic sh/events/#, got %s", sub.topic)
+	}
+	if sub.qos != 1 {
+		t.Errorf("expected QoS 1, got %d", sub.qos)
+	}
+
+	// Deliver valid event
+	now := time.Now().UTC().Truncate(time.Second)
+	validEnv := contract.EventEnvelope{
+		ID:   "evt-1",
+		At:   now,
+		Kind: "camera/offline",
+		Text: "Camera cam1 offline",
+		Data: map[string]any{"camera_id": "cam1"},
+	}
+	b, _ := json.Marshal(validEnv)
+	sub.handler("sh/events/camera/offline", b)
+
+	if len(received) != 1 {
+		t.Fatalf("expected 1 event, got %d", len(received))
+	}
+	if received[0].ID != "evt-1" || received[0].Kind != "camera/offline" {
+		t.Errorf("unexpected event: %+v", received[0])
+	}
+
+	// Deliver invalid JSON -> should be ignored without panic
+	sub.handler("sh/events/camera/offline", []byte("invalid json"))
+	if len(received) != 1 {
+		t.Fatalf("expected still 1 event after invalid JSON, got %d", len(received))
+	}
+}

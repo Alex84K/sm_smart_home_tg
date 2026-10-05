@@ -2,6 +2,7 @@ package coreclient
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -58,6 +59,28 @@ func New(baseURL, token string) (*Client, error) {
 // NewWithInterface constructs a client with a custom or mock contract client.
 func NewWithInterface(api contract.ClientWithResponsesInterface) *Client {
 	return &Client{api: api}
+}
+
+// EventSubscriber defines the subscription interface needed to listen for events (ADR-0016).
+type EventSubscriber interface {
+	Subscribe(ctx context.Context, topic string, qos byte, handler func(topic string, payload []byte)) error
+}
+
+// EventHandler receives decoded EventEnvelopes.
+type EventHandler func(event contract.EventEnvelope)
+
+// SubscribeEvents subscribes to sh/events/# with QoS 1 and invokes handler for valid envelopes.
+func (c *Client) SubscribeEvents(ctx context.Context, sub EventSubscriber, handler EventHandler) error {
+	if sub == nil {
+		return fmt.Errorf("coreclient: missing event subscriber")
+	}
+	return sub.Subscribe(ctx, "sh/events/#", 1, func(_ string, payload []byte) {
+		var env contract.EventEnvelope
+		if err := json.Unmarshal(payload, &env); err != nil {
+			return
+		}
+		handler(env)
+	})
 }
 
 // GetPhoto fetches the latest camera JPEG photo.
