@@ -18,6 +18,10 @@ services:
       - TELEGRAM_ALLOWED_IDS=${TELEGRAM_ALLOWED_IDS}
       - CORE_API_URL=${CORE_API_URL:-http://core:${CORE_PORT:-${PORT:-8080}}}
       - CORE_API_TOKEN=${CORE_API_TOKEN}
+      - TELEGRAM_ALERT_CHAT_ID=${TELEGRAM_ALERT_CHAT_ID:-}
+      - MQTT_URL=${MQTT_URL:-tcp://mosquitto:1883}
+      - MQTT_GATEWAY_USER=${MQTT_GATEWAY_USER:-tg-gateway}
+      - MQTT_GATEWAY_PASSWORD=${MQTT_GATEWAY_PASSWORD:-}
 
 networks:
   smarthome_backend:

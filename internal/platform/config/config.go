@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/joho/godotenv"
+	"gopkg.in/yaml.v3"
 )
 
 // TGConfig holds configuration for the Telegram gateway service.
@@ -15,12 +16,23 @@ type TGConfig struct {
 	TelegramBotToken string
 	TelegramAPIURL   string
 	AllowedIDs       []int64
+	AlertChatID      int64
 	CoreAPIURL       string
 	CoreAPIToken     string
+	MQTTURL          string
+	MQTTUser         string
+	MQTTPassword     string
+	RoutingTelegram  []string
+}
+
+type yamlFile struct {
+	Routing struct {
+		Telegram []string `yaml:"telegram"`
+	} `yaml:"routing"`
 }
 
 // LoadTGConfig loads and validates the Telegram gateway service configuration.
-func LoadTGConfig(envPath string) (*TGConfig, error) {
+func LoadTGConfig(envPath string, yamlPath ...string) (*TGConfig, error) {
 	loadEnv(envPath)
 
 	cfg := &TGConfig{
@@ -29,6 +41,9 @@ func LoadTGConfig(envPath string) (*TGConfig, error) {
 		TelegramAPIURL:   getEnv("TELEGRAM_API_URL", "https://api.telegram.org"),
 		CoreAPIURL:       resolveCoreAPIURL(),
 		CoreAPIToken:     os.Getenv("CORE_API_TOKEN"),
+		MQTTURL:          getEnv("MQTT_URL", "tcp://mosquitto:1883"),
+		MQTTUser:         getEnv("MQTT_GATEWAY_USER", getEnv("MQTT_USER", "tg-gateway")),
+		MQTTPassword:     getEnv("MQTT_GATEWAY_PASSWORD", os.Getenv("MQTT_PASSWORD")),
 	}
 
 	if cfg.TelegramBotToken == "" {
@@ -51,6 +66,33 @@ func LoadTGConfig(envPath string) (*TGConfig, error) {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	cfg.AllowedIDs = allowedIDs
+
+	if rawAlert := os.Getenv("TELEGRAM_ALERT_CHAT_ID"); strings.TrimSpace(rawAlert) != "" {
+		id, err := strconv.ParseInt(strings.TrimSpace(rawAlert), 10, 64)
+		if err != nil {
+			return nil, fmt.Errorf("config: invalid TELEGRAM_ALERT_CHAT_ID: %q", rawAlert)
+		}
+		cfg.AlertChatID = id
+	}
+
+	yPath := "config.yaml"
+	if len(yamlPath) > 0 && yamlPath[0] != "" {
+		yPath = yamlPath[0]
+	}
+
+	if data, err := os.ReadFile(yPath); err == nil {
+		var yf yamlFile
+		if err := yaml.Unmarshal(data, &yf); err != nil {
+			return nil, fmt.Errorf("config: parsing %s: %w", yPath, err)
+		}
+		cfg.RoutingTelegram = yf.Routing.Telegram
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("config: reading %s: %w", yPath, err)
+	}
+
+	if len(cfg.RoutingTelegram) == 0 {
+		cfg.RoutingTelegram = []string{"camera/*"}
+	}
 
 	return cfg, nil
 }
